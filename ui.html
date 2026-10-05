@@ -1,0 +1,906 @@
+<style>
+  /* Colours. Figma adds "figma-dark" to <html> when the app is in dark mode. */
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b6f76;
+    --line: #e3e5e8;
+    --border: #cdd1d6;
+    --hover: #f5f6f7;
+    --accent: #3b82e6;
+    --accent-hover: #2f73d3;
+    --accent-soft: #e7f1fd;
+    --accent-line: #4a90e2;
+    --ok-fg: #0a7a3d;
+    --ok-bg: #dcf5e6;
+    --no-fg: #b3261e;
+    --no-bg: #fde3e1;
+    --off-bg: #eef0f2;
+    --warn: #96590a;
+  }
+  .figma-dark {
+    --bg: #2c2c2c;
+    --text: #f2f2f2;
+    --muted: #a8acb3;
+    --line: #444444;
+    --border: #5c5c5c;
+    --hover: #383838;
+    --accent-soft: #1f3350;
+    --ok-fg: #7ee2a8;
+    --ok-bg: #173d2a;
+    --no-fg: #ff9b93;
+    --no-bg: #4a1f1c;
+    --off-bg: #3a3a3a;
+    --warn: #f0b65a;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    font: 13px/1.45 Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- Tabs ---------- */
+  header { flex: none; border-bottom: 1px solid var(--line); }
+  .tabs { display: flex; gap: 20px; padding: 0 16px; }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 14px 0 12px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .count {
+    padding: 0 6px;
+    border-radius: 9px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+    color: var(--no-fg);
+    background: var(--no-bg);
+  }
+  .count.zero { color: var(--ok-fg); background: var(--ok-bg); }
+
+  /* ---------- Content ---------- */
+  main { flex: 1; overflow-y: auto; padding: 0 16px 16px; }
+  #toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 0 0; }
+  #summary { flex: 1; padding-top: 3px; font-size: 14px; color: var(--muted); }
+  .tools { flex: none; display: flex; gap: 6px; }
+  button.btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+  #summary b { font-weight: 600; color: var(--text); }
+  ul { list-style: none; margin: 0; padding: 12px 0 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+
+  li.pass, li.fail, li.check {
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  li.pass:hover, li.fail:hover, li.check:hover { border-color: var(--border); background: var(--hover); }
+  .main { display: flex; align-items: center; gap: 12px; }
+  .swatch {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    font-size: 16px;
+    font-weight: 600;
+    border: 1px solid var(--line);
+    background: var(--off-bg);
+  }
+  li.check .swatch { color: var(--warn); }
+  .info { flex: 1; min-width: 0; }
+  .text { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta { font-size: 12px; color: var(--muted); }
+  .score { flex: none; text-align: right; }
+  .ratio { font-size: 14px; font-weight: 600; }
+  li.fail .ratio { color: var(--no-fg); }
+  .badges { display: flex; gap: 4px; justify-content: flex-end; margin-top: 3px; }
+  .badge { padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge.ok { color: var(--ok-fg); background: var(--ok-bg); }
+  .badge.no { color: var(--no-fg); background: var(--no-bg); }
+  /* A level you are not aiming for: shown, but not as an error */
+  .badge.off { color: var(--muted); background: var(--off-bg); }
+
+  /* Suggested fix: highlighted box inside a failing card */
+  .fix {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 8px 8px 8px 12px;
+    border: 1px solid var(--accent-line);
+    border-radius: 8px;
+    background: var(--accent-soft);
+    cursor: default;
+  }
+  .fixwrap { cursor: default; }
+  .fix .label { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; }
+  .fix .label.bad { color: var(--no-fg); }
+
+  /* The suggested colour looks like an editable field: click it to pick your own */
+  .color-field {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 8px 0 5px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    font: inherit;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .color-field:hover, .color-field.open { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .color-field .dot { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border); }
+  .color-field svg { color: var(--muted); }
+
+  /* Colour picker, opens under the fix box */
+  .picker { margin-top: 8px; display: grid; gap: 10px; }
+  .sv { position: relative; height: 150px; border-radius: 8px; overflow: hidden; cursor: crosshair; touch-action: none; }
+  .sv canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .sv .thumb {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    margin: -7px 0 0 -7px;
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+  }
+  input.hue {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 12px;
+    margin: 0;
+    border-radius: 6px;
+    background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+    cursor: pointer;
+  }
+  input.hue::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+  }
+  .picker-row { display: flex; align-items: center; gap: 8px; }
+  .preview {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    font-weight: 600;
+  }
+  .hex-input {
+    width: 86px;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    font: inherit;
+    color: var(--text);
+  }
+  .hex-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .picker-note { flex: 1; text-align: right; font-size: 12px; color: var(--muted); }
+
+  /* Bottom line of a card: a note on the left, Ignore on the right */
+  .card-foot { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; }
+  .foot-text { flex: 1; font-size: 12px; color: var(--muted); }
+  .foot-text.warn { color: var(--warn); }
+  button.link {
+    flex: none;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  button.link:hover { color: var(--text); text-decoration: underline; }
+
+  /* Ignored items */
+  li.section { padding: 8px 0 0; }
+  li.section button { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  li.section .chevron { display: inline-block; transition: transform 0.15s; }
+  li.section.open .chevron { transform: rotate(90deg); }
+  li.ignored {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  li.ignored .info { opacity: 0.7; }
+
+  /* Touch target preview: dashed square = required size, filled box = actual size */
+  .size { flex: none; width: 40px; height: 40px; display: grid; place-items: center; }
+  .size .need { display: grid; place-items: center; border: 1px dashed var(--border); border-radius: 4px; }
+  .size .have { border-radius: 2px; background: var(--ok-fg); opacity: 0.85; }
+  li.fail .size .have { background: var(--no-fg); }
+
+  /* Info card for empty states */
+  .info-card {
+    display: flex;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .info-icon {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border: 1.5px solid var(--accent);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font: 600 11px/1 Georgia, serif;
+    color: var(--accent);
+  }
+  .info-title { font-size: 14px; font-weight: 600; }
+  .info-text { margin-top: 4px; color: var(--muted); }
+
+  /* ---------- Buttons and menus ---------- */
+  button.btn, select {
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    font: inherit;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  button.btn:hover, select:hover { background: var(--hover); }
+  button.primary { border-color: transparent; background: var(--accent); color: #ffffff; }
+  button.primary:hover { background: var(--accent-hover); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .fix button.btn { height: 30px; }
+  @media (prefers-reduced-motion: reduce) { li.section .chevron { transition: none; } }
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 30px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0h10L5 6z' fill='%23888'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 11px center;
+  }
+  button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ---------- Bottom action bar ---------- */
+  footer {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+  }
+  footer .spacer { flex: 1; }
+</style>
+
+<header>
+  <nav class="tabs">
+    <button class="tab active" data-tab="contrast">Contrast<span class="count" id="count-contrast" hidden></span></button>
+    <button class="tab" data-tab="targets">Touch targets<span class="count" id="count-targets" hidden></span></button>
+  </nav>
+</header>
+
+<main>
+  <div id="toolbar" hidden>
+    <div id="summary"></div>
+    <div class="tools">
+      <button id="clear" class="btn small" hidden title="Remove the markers and legend from the canvas">Clear</button>
+      <button id="annotate" class="btn small" hidden title="Put numbered markers on the canvas for every failing item in both tabs">Annotate</button>
+    </div>
+  </div>
+  <ul id="list"></ul>
+</main>
+
+<footer>
+  <select id="level" hidden title="Contrast level that counts as passing">
+    <option value="AA">Target: AA</option>
+    <option value="AAA">Target: AAA</option>
+  </select>
+  <select id="size" hidden title="Minimum touch target size">
+    <option value="44">44 × 44 · iOS</option>
+    <option value="48">48 × 48 · Android</option>
+    <option value="24">24 × 24 · WCAG AA</option>
+  </select>
+  <div class="spacer"></div>
+  <button id="recheck" class="btn" title="The plugin re-checks by itself when the design changes. Use this after editing a colour style or variable.">Re-check</button>
+  <button id="fixall" class="btn primary" hidden>Fix all</button>
+</footer>
+
+<script>
+  const list = document.getElementById('list');
+  const summary = document.getElementById('summary');
+  const fixAllButton = document.getElementById('fixall');
+  const sizeSelect = document.getElementById('size');
+  const levelSelect = document.getElementById('level');
+  const tabButtons = document.querySelectorAll('.tab');
+  const toolbar = document.getElementById('toolbar');
+  const annotateButton = document.getElementById('annotate');
+  const clearButton = document.getElementById('clear');
+  const scroller = document.querySelector('main');
+
+  let activeTab = 'contrast';
+  let data = null; // last message from the plugin
+  let picker = null; // the open colour picker: { id, h, s, v }
+  let showIgnored = false;
+  let lastSnapshot = ''; // the last results shown, to spot re-checks that change nothing
+
+  // Ignored items only stay hidden while they still have a problem
+  const isHidden = (x) => x.ignored && x.status !== 'pass';
+  const isFail = (x) => x.status === 'fail' && !x.ignored;
+
+  function send(msg) {
+    parent.postMessage({ pluginMessage: msg }, '*');
+  }
+
+  document.getElementById('recheck').onclick = () => send({ type: 'recheck' });
+  fixAllButton.onclick = () => {
+    fixAllButton.disabled = true;
+    fixAllButton.textContent = 'Fixing…';
+    send({ type: 'fix-all' });
+  };
+  annotateButton.onclick = () => {
+    annotateButton.disabled = true;
+    annotateButton.textContent = 'Annotating…';
+    send({ type: 'annotate' });
+  };
+  clearButton.onclick = () =>
+    send({ type: 'clear-annotations', scope: data && data.annotatedSelection ? 'selection' : 'all' });
+  levelSelect.onchange = () => send({ type: 'set-level', level: levelSelect.value });
+  sizeSelect.onchange = () => send({ type: 'set-target', size: Number(sizeSelect.value) });
+  tabButtons.forEach((button) => {
+    button.onclick = () => {
+      activeTab = button.dataset.tab;
+      render();
+      scroller.scrollTop = 0;
+    };
+  });
+
+  function el(tag, className, text) {
+    const e = document.createElement(tag);
+    if (className) e.className = className;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  // "isTarget = false" means the level isn't the one being aimed for, so a miss is greyed out
+  function badge(label, ok, isTarget = true) {
+    const style = ok ? 'ok' : isTarget ? 'no' : 'off';
+    return el('span', 'badge ' + style, label + (ok ? ' ✓' : ' ✕'));
+  }
+
+  function infoCard(title, text) {
+    const card = el('li', 'info-card');
+    const icon = el('div', 'info-icon', 'i');
+    const body = el('div', 'info-body');
+    body.append(el('div', 'info-title', title), el('div', 'info-text', text));
+    card.append(icon, body);
+    return card;
+  }
+
+  // ---------- Colour maths (same formulas as the plugin code) ----------
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.replace('#', ''), 16);
+    return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
+  }
+  function rgbToHex(c) {
+    const h = (v) => ('0' + Math.round(v * 255).toString(16)).slice(-2);
+    return ('#' + h(c.r) + h(c.g) + h(c.b)).toUpperCase();
+  }
+  function luminance(c) {
+    const ch = (v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+  }
+  function contrast(a, b) {
+    const l1 = luminance(a);
+    const l2 = luminance(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }
+  // h: 0–360, s and v: 0–1
+  function hsvToRgb(h, s, v) {
+    const f = (n) => {
+      const k = (n + h / 60) % 6;
+      return v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+    };
+    return { r: f(5), g: f(3), b: f(1) };
+  }
+  function rgbToHsv(c) {
+    const max = Math.max(c.r, c.g, c.b);
+    const d = max - Math.min(c.r, c.g, c.b);
+    let h = 0;
+    if (d !== 0) {
+      if (max === c.r) h = ((c.g - c.b) / d + 6) % 6;
+      else if (max === c.g) h = (c.b - c.r) / d + 2;
+      else h = (c.r - c.g) / d + 4;
+    }
+    return { h: h * 60, s: max === 0 ? 0 : d / max, v: max };
+  }
+
+  // ---------- Shared card parts ----------
+
+  // Bottom line of a card: an optional note, and the Ignore button
+  function cardFoot(text, textClass, kind, id) {
+    const foot = el('div', 'card-foot');
+    foot.append(el('div', 'foot-text ' + textClass, text));
+    const ignore = el('button', 'link', 'Ignore');
+    ignore.title = 'Hide this item, for example a logo, decorative text or a disabled state';
+    ignore.onclick = (event) => {
+      event.stopPropagation();
+      if (picker && picker.id === id) picker = null;
+      send({ type: 'ignore', id, kind });
+    };
+    foot.append(ignore);
+    return foot;
+  }
+
+  // "Ignored (n)" heading that opens and closes, followed by the ignored items
+  function ignoredSection(items, kind, describe) {
+    if (items.length === 0) return;
+    const head = el('li', 'section' + (showIgnored ? ' open' : ''));
+    const toggle = el('button', 'link');
+    toggle.append(el('span', 'chevron', '›'), document.createTextNode('Ignored (' + items.length + ')'));
+    toggle.onclick = () => {
+      showIgnored = !showIgnored;
+      render();
+    };
+    head.append(toggle);
+    list.append(head);
+    if (!showIgnored) return;
+
+    items.forEach((item) => {
+      const li = el('li', 'ignored');
+      const info = el('div', 'info');
+      const d = describe(item);
+      info.append(el('div', 'text', d.title), el('div', 'meta', d.meta));
+      const restore = el('button', 'btn small', 'Restore');
+      restore.onclick = (event) => {
+        event.stopPropagation();
+        send({ type: 'restore', id: item.id, kind });
+      };
+      li.append(info, restore);
+      li.onclick = () => send({ type: 'select', id: item.id });
+      list.append(li);
+    });
+  }
+
+  function setCount(id, fails, show) {
+    const count = document.getElementById(id);
+    count.hidden = !show;
+    count.textContent = fails;
+    count.className = 'count' + (fails === 0 ? ' zero' : '');
+  }
+
+  // ---------- Contrast tab ----------
+
+  const PENCIL =
+    '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" ' +
+    'stroke-linejoin="round"><path d="M8.2 1.6l2.2 2.2-6.3 6.3-2.7.5.5-2.7z"/></svg>';
+
+  // Colour picker with a live contrast ratio. Striped area = colours that fail.
+  function buildPicker(panel, r, bg, onChange) {
+    const sv = el('div', 'sv');
+    const canvas = document.createElement('canvas');
+    canvas.width = 360;
+    canvas.height = 150;
+    const thumb = el('div', 'thumb');
+    sv.append(canvas, thumb);
+
+    const hue = document.createElement('input');
+    hue.type = 'range';
+    hue.min = 0;
+    hue.max = 360;
+    hue.className = 'hue';
+    hue.title = 'Hue';
+    hue.value = picker.h;
+
+    const row = el('div', 'picker-row');
+    const preview = el('div', 'preview', 'Aa');
+    preview.style.background = r.bgHex;
+    const input = document.createElement('input');
+    input.className = 'hex-input';
+    input.maxLength = 7;
+    input.spellcheck = false;
+    input.title = 'Hex colour';
+    row.append(preview, input, el('div', 'picker-note', 'Striped area fails ' + data.level));
+    panel.append(sv, hue, row);
+
+    // Marks which colours of the current hue fail, and draws the line where passing starts
+    function drawPassArea() {
+      const ctx = canvas.getContext('2d');
+      const cols = canvas.width;
+      const rows = canvas.height;
+      const pass = new Uint8Array(cols * rows);
+      const bgLum = luminance(bg);
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const lum = luminance(hsvToRgb(picker.h, x / (cols - 1), 1 - y / (rows - 1)));
+          const ratio = (Math.max(lum, bgLum) + 0.05) / (Math.min(lum, bgLum) + 0.05);
+          pass[y * cols + x] = ratio >= r.needed ? 1 : 0;
+        }
+      }
+      ctx.clearRect(0, 0, cols, rows);
+      const edge = [];
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const here = pass[y * cols + x];
+          if (!here && (x + y) % 10 === 0) {
+            ctx.fillStyle = 'rgba(255,255,255,0.55)';
+            ctx.fillRect(x, y, 1, 1);
+          } else if (!here && (x + y) % 10 === 1) {
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(x, y, 1, 1);
+          }
+          const right = x + 1 < cols ? pass[y * cols + x + 1] : here;
+          const below = y + 1 < rows ? pass[(y + 1) * cols + x] : here;
+          if (here !== right || here !== below) edge.push(x, y);
+        }
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      for (let i = 0; i < edge.length; i += 2) ctx.fillRect(edge[i] - 1, edge[i + 1] - 1, 3, 3);
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < edge.length; i += 2) ctx.fillRect(edge[i], edge[i + 1], 1, 1);
+    }
+
+    function update(fromInput) {
+      const hex = rgbToHex(hsvToRgb(picker.h, picker.s, picker.v));
+      sv.style.background =
+        'linear-gradient(to top, #000, rgba(0,0,0,0)), ' +
+        'linear-gradient(to right, #fff, hsl(' + picker.h + ', 100%, 50%))';
+      thumb.style.left = picker.s * 100 + '%';
+      thumb.style.top = (1 - picker.v) * 100 + '%';
+      thumb.style.background = hex;
+      preview.style.color = hex;
+      if (!fromInput) input.value = hex;
+      onChange(hex);
+    }
+
+    function drag(event) {
+      const box = sv.getBoundingClientRect();
+      picker.s = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+      picker.v = 1 - Math.min(1, Math.max(0, (event.clientY - box.top) / box.height));
+      update(false);
+    }
+    sv.onpointerdown = (event) => {
+      sv.setPointerCapture(event.pointerId);
+      drag(event);
+    };
+    sv.onpointermove = (event) => {
+      if (event.buttons) drag(event);
+    };
+    hue.oninput = () => {
+      picker.h = Number(hue.value);
+      drawPassArea();
+      update(false);
+    };
+    input.oninput = () => {
+      const value = input.value.trim().replace(/^#?/, '#');
+      if (!/^#[0-9a-f]{6}$/i.test(value)) return;
+      const hsv = rgbToHsv(hexToRgb(value));
+      // Greys have no hue of their own, so keep the slider where it was
+      if (hsv.s > 0) picker.h = hsv.h;
+      picker.s = hsv.s;
+      picker.v = hsv.v;
+      hue.value = picker.h;
+      drawPassArea();
+      update(true);
+    };
+
+    drawPassArea();
+    update(false);
+  }
+
+  // Suggested colour, with a picker to choose your own
+  function fixRow(r) {
+    const wrap = el('div', 'fixwrap');
+    wrap.onclick = (event) => event.stopPropagation(); // don't also select the layer
+    const box = el('div', 'fix');
+    const isOpen = !!picker && picker.id === r.id;
+
+    const field = el('button', 'color-field' + (isOpen ? ' open' : ''));
+    field.title = 'Choose your own colour';
+    const dot = el('span', 'dot');
+    const hexLabel = el('span', 'hex');
+    field.append(dot, hexLabel);
+    field.insertAdjacentHTML('beforeend', PENCIL);
+
+    const label = el('div', 'label');
+    const apply = el('button', 'btn primary', 'Apply');
+    box.append(field, label, apply);
+    wrap.append(box);
+
+    const bg = hexToRgb(r.bgHex);
+    let current = r.suggestHex; // the colour Apply will use
+
+    function show(hex) {
+      current = hex;
+      const ratio = contrast(hexToRgb(hex), bg);
+      const ok = ratio >= r.needed;
+      dot.style.background = hex;
+      hexLabel.textContent = hex;
+      label.textContent = '→ ' + ratio.toFixed(2) + ':1' + (ok ? '' : ' ✕');
+      label.title = ok ? '' : 'This colour fails ' + data.level;
+      label.className = 'label' + (ok ? '' : ' bad');
+      apply.textContent = ok ? 'Apply' : 'Apply anyway';
+    }
+
+    field.onclick = () => {
+      picker = isOpen ? null : Object.assign({ id: r.id }, rgbToHsv(hexToRgb(r.suggestHex)));
+      render();
+    };
+    apply.onclick = () => {
+      apply.disabled = true;
+      apply.textContent = 'Applying…';
+      picker = null;
+      send({ type: 'apply', id: r.id, hex: current === r.suggestHex ? undefined : current });
+    };
+
+    if (isOpen) {
+      const panel = el('div', 'picker');
+      wrap.append(panel);
+      buildPicker(panel, r, bg, show);
+    } else {
+      show(r.suggestHex);
+    }
+    return wrap;
+  }
+
+  function contrastRow(r) {
+    const li = el('li', r.status);
+    const main = el('div', 'main');
+
+    const swatch = el('div', 'swatch');
+    if (r.ratio !== null) {
+      swatch.style.background = r.bgHex;
+      swatch.style.color = r.textHex;
+      swatch.textContent = 'Aa';
+    } else {
+      swatch.textContent = '?';
+    }
+
+    const info = el('div', 'info');
+    info.append(el('div', 'text', r.text.trim() || r.name));
+    const meta = r.ratio !== null
+      ? r.textHex + ' on ' + r.bgHex + ' · ' + r.fontSize + 'px' + (r.isLarge ? ' · large text' : '')
+      : r.note;
+    info.append(el('div', 'meta', meta));
+
+    main.append(swatch, info);
+
+    if (r.ratio !== null) {
+      const score = el('div', 'score');
+      score.append(el('div', 'ratio', r.ratio.toFixed(2) + ':1'));
+      const badges = el('div', 'badges');
+      badges.append(badge('AA', r.aa), badge('AAA', r.aaa, data.level === 'AAA'));
+      score.append(badges);
+      main.append(score);
+    }
+
+    li.append(main);
+    if (r.status === 'fail' && r.noFix) {
+      li.append(cardFoot('No text colour can pass on this background — change the background instead.',
+        'warn', 'contrast', r.id));
+    } else if (r.status === 'fail') {
+      li.append(fixRow(r));
+      li.append(cardFoot(r.detachesStyle ? 'Applying will detach the colour style or variable' : '',
+        '', 'contrast', r.id));
+    } else if (r.status === 'check') {
+      li.append(cardFoot('', '', 'contrast', r.id));
+    }
+
+    li.onclick = () => send({ type: 'select', id: r.id });
+    return li;
+  }
+
+  function renderContrast() {
+    levelSelect.hidden = false;
+    const results = data.results;
+    if (results.length === 0) {
+      list.append(infoCard('No text layers in the selection',
+        'Select a frame that contains text, or select text layers directly.'));
+      return;
+    }
+    const shown = results.filter((r) => !isHidden(r));
+    const ignored = results.filter(isHidden);
+    const fails = shown.filter((r) => r.status === 'fail').length;
+    const checks = shown.filter((r) => r.status === 'check').length;
+    const fixable = shown.filter((r) => r.status === 'fail' && r.suggestHex).length;
+
+    summary.append(el('b', '', fails + ' failing ' + data.level));
+    let rest = ' of ' + results.length + ' text layers';
+    if (checks) rest += ' · ' + checks + ' to check manually';
+    if (ignored.length) rest += ' · ' + ignored.length + ' ignored';
+    if (data.total > results.length) rest += ' (first ' + results.length + ' shown)';
+    summary.append(document.createTextNode(rest));
+
+    if (fixable > 0) {
+      fixAllButton.hidden = false;
+      fixAllButton.disabled = false;
+      fixAllButton.textContent = 'Fix all (' + fixable + ')';
+    }
+    shown.forEach((r) => list.append(contrastRow(r)));
+    ignoredSection(ignored, 'contrast', (r) => ({
+      title: r.text.trim() || r.name,
+      meta: r.ratio !== null ? 'Contrast ' + r.ratio.toFixed(2) + ':1' : r.note,
+    }));
+  }
+
+  // ---------- Touch targets tab ----------
+
+  function sizePreview(t, target) {
+    const scale = 40 / Math.max(target, t.width, t.height);
+    const box = el('div', 'size');
+    const need = el('div', 'need');
+    need.style.width = need.style.height = target * scale + 'px';
+    const have = el('div', 'have');
+    have.style.width = Math.max(2, t.width * scale) + 'px';
+    have.style.height = Math.max(2, t.height * scale) + 'px';
+    // A layer bigger than the target can't sit inside the dashed square
+    if (t.width > target || t.height > target) {
+      box.append(have);
+    } else {
+      need.append(have);
+      box.append(need);
+    }
+    return box;
+  }
+
+  function targetRow(t) {
+    const li = el('li', t.status);
+    const main = el('div', 'main');
+
+    const info = el('div', 'info');
+    info.append(el('div', 'text', t.name));
+    info.append(el('div', 'meta', t.reason));
+
+    const score = el('div', 'score');
+    score.append(el('div', 'ratio', t.width + ' × ' + t.height));
+    const badges = el('div', 'badges');
+    badges.append(badge(data.targetSize + ' × ' + data.targetSize, t.status === 'pass'));
+    score.append(badges);
+
+    main.append(sizePreview(t, data.targetSize), info, score);
+    li.append(main);
+    if (t.status === 'fail') li.append(cardFoot(t.hint || '', 'warn', 'target', t.id));
+
+    li.onclick = () => send({ type: 'select', id: t.id });
+    return li;
+  }
+
+  function renderTargets() {
+    sizeSelect.hidden = false;
+    const targets = data.targets;
+    if (targets.length === 0) {
+      list.append(infoCard('No tappable layers found',
+        'The plugin looks for layers with a prototype link, or with a name like ' +
+        '"Button", "Tab", "Close" or "More". Name your tappable layers that way and press Re-check.'));
+      return;
+    }
+    const shown = targets.filter((t) => !isHidden(t));
+    const ignored = targets.filter(isHidden);
+    const fails = shown.filter((t) => t.status === 'fail').length;
+    summary.append(el('b', '', fails + ' too small'));
+    summary.append(document.createTextNode(' of ' + targets.length + ' tappable layers' +
+      (ignored.length ? ' · ' + ignored.length + ' ignored' : '')));
+    shown.forEach((t) => list.append(targetRow(t)));
+    ignoredSection(ignored, 'target', (t) => ({
+      title: t.name,
+      meta: 'Touch target ' + t.width + ' × ' + t.height,
+    }));
+  }
+
+  // ---------- Rendering ----------
+
+  function render() {
+    // Rebuilding the list must not make it jump back to the top
+    const scrollTop = scroller.scrollTop;
+    renderBody();
+    scroller.scrollTop = scrollTop;
+
+    // Annotate covers failing items from both tabs
+    const hasResults = data && data.type === 'results';
+    const fails = hasResults
+      ? data.results.filter(isFail).length + data.targets.filter(isFail).length
+      : 0;
+    annotateButton.hidden = fails === 0;
+    annotateButton.disabled = false;
+    // Each screen keeps its own annotations, so the buttons follow the selected screens
+    const onSelection = !!(data && data.annotatedSelection);
+    annotateButton.textContent = onSelection ? 'Update markers' : 'Annotate';
+    clearButton.hidden = !(data && data.annotated);
+    clearButton.textContent = onSelection ? 'Clear' : 'Clear all';
+    clearButton.title = onSelection
+      ? 'Remove the markers and legend from the selected screens'
+      : 'Remove every marker and legend on this page';
+    toolbar.hidden = summary.textContent === '' && annotateButton.hidden && clearButton.hidden;
+  }
+
+  function renderBody() {
+    tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === activeTab));
+    list.innerHTML = '';
+    summary.textContent = '';
+    fixAllButton.hidden = true;
+    sizeSelect.hidden = true;
+    levelSelect.hidden = true;
+
+    const hasResults = data && data.type === 'results';
+    setCount('count-contrast',
+      hasResults ? data.results.filter(isFail).length : 0,
+      hasResults && data.results.length > 0);
+    setCount('count-targets',
+      hasResults ? data.targets.filter(isFail).length : 0,
+      hasResults && data.targets.length > 0);
+
+    if (!hasResults) {
+      list.append(infoCard('Select something to check',
+        activeTab === 'contrast'
+          ? 'Select a frame or text layers on the canvas. Every text layer inside is checked for colour contrast.'
+          : 'Select a frame on the canvas. Buttons and other tappable layers inside are checked for size.'));
+      sizeSelect.hidden = activeTab !== 'targets';
+      levelSelect.hidden = activeTab !== 'contrast';
+      return;
+    }
+    if (activeTab === 'contrast') renderContrast();
+    else renderTargets();
+  }
+
+  onmessage = (event) => {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+
+    // An automatic re-check that found nothing new: leave the window exactly as it is
+    const snapshot = JSON.stringify(Object.assign({}, msg, { auto: false }));
+    if (msg.auto && snapshot === lastSnapshot) return;
+    lastSnapshot = snapshot;
+
+    data = msg;
+    // Close the picker if its layer is no longer failing (fixed, ignored or deselected)
+    if (picker && !(msg.results || []).some((r) => r.id === picker.id && isFail(r))) picker = null;
+    if (msg.targetSize) sizeSelect.value = String(msg.targetSize);
+    if (msg.level) levelSelect.value = msg.level;
+    render();
+  };
+</script>
