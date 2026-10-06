@@ -159,7 +159,7 @@
 
   /* Colour picker, opens under the fix box */
   .picker { margin-top: 8px; display: grid; gap: 10px; }
-  .sv { position: relative; height: 150px; border-radius: 8px; overflow: hidden; cursor: crosshair; touch-action: none; }
+  .sv { position: relative; height: 150px; border-radius: 8px; overflow: hidden; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; }
   .sv canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .sv .thumb {
     position: absolute;
@@ -212,7 +212,10 @@
     color: var(--text);
   }
   .hex-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .picker-note { flex: 1; text-align: right; font-size: 12px; color: var(--muted); }
+  .picker-note { font-size: 12px; color: var(--muted); margin-top: -4px; }
+  .live { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .live-ratio { font-size: 16px; font-weight: 600; }
+  .live-ratio.bad { color: var(--no-fg); }
 
   /* Bottom line of a card: a note on the left, Ignore on the right */
   .card-foot { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; }
@@ -329,7 +332,7 @@
     <div id="summary"></div>
     <div class="tools">
       <button id="clear" class="btn small" hidden title="Remove the markers and legend from the canvas">Clear</button>
-      <button id="annotate" class="btn small" hidden title="Put numbered markers on the canvas for every failing item in both tabs">Annotate</button>
+      <button id="annotate" class="btn small" hidden title="Put numbered markers on the canvas for every failing item on the selected screens, from both tabs">Annotate</button>
     </div>
   </div>
   <ul id="list"></ul>
@@ -545,8 +548,13 @@
     input.maxLength = 7;
     input.spellcheck = false;
     input.title = 'Hex colour';
-    row.append(preview, input, el('div', 'picker-note', 'Striped area fails ' + data.level));
-    panel.append(sv, hue, row);
+    // The live result for the colour being picked, large enough to watch while dragging
+    const live = el('div', 'live');
+    const liveRatio = el('span', 'live-ratio');
+    const liveBadge = el('span', 'badge');
+    live.append(liveRatio, liveBadge);
+    row.append(preview, input, live);
+    panel.append(sv, hue, row, el('div', 'picker-note', 'Striped area = colours that fail ' + data.level));
 
     // Marks which colours of the current hue fail, and draws the line where passing starts
     function drawPassArea() {
@@ -595,6 +603,12 @@
       thumb.style.background = hex;
       preview.style.color = hex;
       if (!fromInput) input.value = hex;
+      const ratio = contrast(hexToRgb(hex), bg);
+      const ok = ratio >= r.needed;
+      liveRatio.textContent = ratio.toFixed(2) + ':1';
+      liveRatio.className = 'live-ratio' + (ok ? '' : ' bad');
+      liveBadge.textContent = data.level + (ok ? ' ✓' : ' ✕');
+      liveBadge.className = 'badge ' + (ok ? 'ok' : 'no');
       onChange(hex);
     }
 
@@ -604,18 +618,32 @@
       picker.v = 1 - Math.min(1, Math.max(0, (event.clientY - box.top) / box.height));
       update(false);
     }
+    // Dragging must work even if the browser refuses to "capture" the pointer,
+    // so the colour is updated first and capture is only a bonus.
+    let dragging = false;
     sv.onpointerdown = (event) => {
-      sv.setPointerCapture(event.pointerId);
+      event.preventDefault(); // no text selection or image dragging while picking
+      dragging = true;
       drag(event);
+      try {
+        sv.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // Without capture the drag still works while the pointer is over the square
+      }
     };
     sv.onpointermove = (event) => {
-      if (event.buttons) drag(event);
+      if (dragging) drag(event);
     };
-    hue.oninput = () => {
+    sv.onpointerup = sv.onpointercancel = () => {
+      dragging = false;
+    };
+    const hueChanged = () => {
       picker.h = Number(hue.value);
       drawPassArea();
       update(false);
     };
+    hue.oninput = hueChanged;
+    hue.onchange = hueChanged;
     input.oninput = () => {
       const value = input.value.trim().replace(/^#?/, '#');
       if (!/^#[0-9a-f]{6}$/i.test(value)) return;
@@ -704,7 +732,8 @@
     const info = el('div', 'info');
     info.append(el('div', 'text', r.text.trim() || r.name));
     const meta = r.ratio !== null
-      ? r.textHex + ' on ' + r.bgHex + ' · ' + r.fontSize + 'px' + (r.isLarge ? ' · large text' : '')
+      ? r.textHex + ' on ' + r.bgHex + ' · ' + r.fontSize + 'px' + (r.isLarge ? ' · large text' : '') +
+        (r.varied ? ' · varied background, worst spot' : '')
       : r.note;
     info.append(el('div', 'meta', meta));
 
@@ -845,10 +874,11 @@
     const fails = hasResults
       ? data.results.filter(isFail).length + data.targets.filter(isFail).length
       : 0;
-    annotateButton.hidden = fails === 0;
-    annotateButton.disabled = false;
     // Each screen keeps its own annotations, so the buttons follow the selected screens
     const onSelection = !!(data && data.annotatedSelection);
+    // Keep "Update markers" available after everything is fixed, so old markers can be refreshed
+    annotateButton.hidden = fails === 0 && !onSelection;
+    annotateButton.disabled = false;
     annotateButton.textContent = onSelection ? 'Update markers' : 'Annotate';
     clearButton.hidden = !(data && data.annotated);
     clearButton.textContent = onSelection ? 'Clear' : 'Clear all';
@@ -887,9 +917,99 @@
     else renderTargets();
   }
 
+  // ---------- Reading background colours from a rendered image ----------
+  // The plugin code can't look at pixels, so it sends a picture of the screen here.
+  // For each text, the colours in a thin ring just around it are its background.
+
+  function ringColours(ctx, imageWidth, imageHeight, x0, y0, x1, y1, pageBg) {
+    const MARGIN = 2;
+    x0 = Math.max(0, Math.floor(x0) - MARGIN);
+    y0 = Math.max(0, Math.floor(y0) - MARGIN);
+    x1 = Math.min(imageWidth, Math.ceil(x1) + MARGIN);
+    y1 = Math.min(imageHeight, Math.ceil(y1) + MARGIN);
+    const w = x1 - x0;
+    const h = y1 - y0;
+    if (w < 1 || h < 1) return null;
+    const px = ctx.getImageData(x0, y0, w, h).data;
+
+    const buckets = new Map(); // similar colours counted together
+    let total = 0;
+    let darkest = null;
+    let lightest = null;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const onRing = x < MARGIN || x >= w - MARGIN || y < MARGIN || y >= h - MARGIN;
+        if (!onRing) continue;
+        const i = (y * w + x) * 4;
+        const a = px[i + 3] / 255; // see-through pixels show the page behind the screen
+        const r = px[i] * a + pageBg[0] * 255 * (1 - a);
+        const g = px[i + 1] * a + pageBg[1] * 255 * (1 - a);
+        const b = px[i + 2] * a + pageBg[2] * 255 * (1 - a);
+        const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+        let bucket = buckets.get(key);
+        if (!bucket) buckets.set(key, (bucket = { r: 0, g: 0, b: 0, n: 0 }));
+        bucket.r += r; bucket.g += g; bucket.b += b; bucket.n++;
+        total++;
+        const light = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if (!darkest || light < darkest.light) darkest = { r, g, b, light };
+        if (!lightest || light > lightest.light) lightest = { r, g, b, light };
+      }
+    }
+    if (total === 0) return null;
+
+    // Keep the colours that make up a real share of the ring; ignore specks
+    const main = Array.from(buckets.values()).filter((k) => k.n / total >= 0.08).sort((a, b) => b.n - a.n).slice(0, 6);
+    const colours = main.map((k) => [k.r / k.n / 255, k.g / k.n / 255, k.b / k.n / 255]);
+    const covered = main.reduce((sum, k) => sum + k.n, 0) / total;
+    // A noisy background (a photo): also judge against its darkest and lightest spots
+    if (covered < 0.7) {
+      colours.push([darkest.r / 255, darkest.g / 255, darkest.b / 255]);
+      colours.push([lightest.r / 255, lightest.g / 255, lightest.b / 255]);
+    }
+    return colours;
+  }
+
+  async function measure(msg) {
+    const colors = {};
+    let error;
+    try {
+      for (const shot of msg.shots) {
+        const bitmap = await createImageBitmap(new Blob([shot.bytes], { type: 'image/png' }));
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(bitmap, 0, 0);
+
+        // The picture normally covers the screen's own box. If its shape doesn't match
+        // (content sticking out), it covers the larger "render" box instead.
+        const fits = (box) =>
+          Math.abs(bitmap.width / box.width - bitmap.height / box.height) < 0.02;
+        const origin = fits(shot.box) || !fits(shot.renderBox) ? shot.box : shot.renderBox;
+        const scale = bitmap.width / origin.width;
+
+        for (const item of shot.items) {
+          const found = ringColours(ctx, bitmap.width, bitmap.height,
+            (item.x - origin.x) * scale, (item.y - origin.y) * scale,
+            (item.x + item.width - origin.x) * scale, (item.y + item.height - origin.y) * scale,
+            msg.pageBg);
+          if (found) colors[item.id] = found;
+        }
+      }
+    } catch (problem) {
+      // Whatever could not be measured stays "check manually"; report why
+      error = 'reading the image failed: ' + (problem && problem.message ? problem.message : String(problem));
+    }
+    send({ type: 'measured', requestId: msg.requestId, colors, error });
+  }
+
   onmessage = (event) => {
     const msg = event.data.pluginMessage;
     if (!msg) return;
+    if (msg.type === 'measure') {
+      measure(msg);
+      return;
+    }
 
     // An automatic re-check that found nothing new: leave the window exactly as it is
     const snapshot = JSON.stringify(Object.assign({}, msg, { auto: false }));

@@ -4,6 +4,8 @@
 // 3. Annotations: puts numbered markers and a legend on the canvas for the team.
 // Items can be ignored (saved on the layer), and fix colours can be picked by hand.
 // The checks run again automatically whenever the design changes.
+// Backgrounds the layers can't explain (vectors, outlined elements, gradients) are measured
+// from pixels. Text on photos is left as "check manually".
 
 figma.showUI(__html__, { width: 420, height: 640, themeColors: true });
 
@@ -26,7 +28,8 @@ function neededRatio(isLarge: boolean, level: Level): number {
 }
 
 type Layer = { color: RGB; opacity: number };
-type PaintResult = { layer: Layer } | { complex: true } | null;
+// "complex" = not one plain colour. "photo" = an image or video, as opposed to a gradient.
+type PaintResult = { layer: Layer } | { complex: true; photo: boolean } | null;
 
 type Result = {
   id: string;
@@ -47,12 +50,14 @@ type Result = {
   suggestRatio?: number;
   noFix?: boolean;
   detachesStyle?: boolean;
+  varied?: boolean; // the background has more than one colour (gradient, photo, pattern)
 };
 
 type SegmentCheck = {
   start: number;
   end: number;
   textColor: RGB;
+  bg: RGB; // the background colour this part contrasts least with
   ratio: number;
   fontSize: number;
   isLarge: boolean;
@@ -166,7 +171,7 @@ function suggestColor(text: RGB, bg: RGB, target: number): RGB | null {
 function topVisiblePaint(
   fills: ReadonlyArray<Paint> | PluginAPI['mixed']
 ): PaintResult {
-  if (fills === figma.mixed) return { complex: true };
+  if (fills === figma.mixed) return { complex: true, photo: false };
   const list = fills as ReadonlyArray<Paint>;
   for (let i = list.length - 1; i >= 0; i--) {
     const p = list[i];
@@ -174,7 +179,7 @@ function topVisiblePaint(
     if (p.type === 'SOLID') {
       return { layer: { color: p.color, opacity: p.opacity ?? 1 } };
     }
-    return { complex: true };
+    return { complex: true, photo: p.type.indexOf('GRADIENT') !== 0 };
   }
   return null;
 }
@@ -227,18 +232,27 @@ function composite(layers: Layer[], base: RGB): RGB {
   return c;
 }
 
-function findBackground(node: SceneNode): { color: RGB } | { note: string } {
+// "measurable" says whether the plugin may read the colour from a rendered image instead.
+// Shapes, icons and gradients: yes. Photos: no, those are left for a person to judge.
+type NoBackground = { note: string; measurable: boolean };
+
+function findBackground(node: SceneNode): { color: RGB } | NoBackground {
   const box = node.absoluteBoundingBox;
   const layers: Layer[] = [];
-  const complexNote = {
-    note: 'Background is an image, gradient or mixed fill — check manually',
+  const photoNote: NoBackground = {
+    note: 'Background is a photo or image — check manually',
+    measurable: false,
+  };
+  const complexNote: NoBackground = {
+    note: 'Background is a gradient or mixed fill — check manually',
+    measurable: true,
   };
 
-  const consider = (target: SceneNode): 'opaque' | 'complex' | 'continue' => {
+  const consider = (target: SceneNode): 'opaque' | 'photo' | 'complex' | 'continue' => {
     if (!('fills' in target)) return 'continue';
     const r = topVisiblePaint(target.fills);
     if (!r) return 'continue';
-    if ('complex' in r) return 'complex';
+    if ('complex' in r) return r.photo ? 'photo' : 'complex';
     const nodeOpacity = 'opacity' in target ? target.opacity : 1;
     const alpha = r.layer.opacity * nodeOpacity;
     layers.push({ color: r.layer.color, opacity: alpha });
@@ -261,17 +275,19 @@ function findBackground(node: SceneNode): { color: RGB } | { note: string } {
       if (cover === 'misses') continue;
       if (cover === 'unsure') {
         // An irregular shape only matters if it is filled with something
-        if ('fills' in sib && topVisiblePaint(sib.fills)) {
-          return { note: 'Text sits on an irregular shape — check manually' };
-        }
-        continue;
+        const paint = 'fills' in sib ? topVisiblePaint(sib.fills) : null;
+        if (!paint) continue;
+        if ('complex' in paint && paint.photo) return photoNote;
+        return { note: 'Text sits on an irregular shape — check manually', measurable: true };
       }
       const s = consider(sib);
+      if (s === 'photo') return photoNote;
       if (s === 'complex') return complexNote;
       if (s === 'opaque') return { color: composite(layers, WHITE) };
     }
 
     const s = consider(parent);
+    if (s === 'photo') return photoNote;
     if (s === 'complex') return complexNote;
     if (s === 'opaque') return { color: composite(layers, WHITE) };
 
@@ -285,10 +301,12 @@ function findBackground(node: SceneNode): { color: RGB } | { note: string } {
 
 // ---------- Checking text ----------
 
-// Checks every part of a text layer (it can mix colours and sizes)
+// Checks every part of a text layer (it can mix colours and sizes).
+// "bgs" is one colour for a plain background, or several for a gradient or photo;
+// each part is judged against the background colour it contrasts least with.
 function analyzeSegments(
   node: TextNode,
-  bg: RGB
+  bgs: RGB[]
 ): SegmentCheck[] | { note: string } {
   const checks: SegmentCheck[] = [];
   const segments = node.getStyledTextSegments(['fills', 'fontSize', 'fontWeight']);
@@ -299,11 +317,19 @@ function analyzeSegments(
     if ('complex' in paint) {
       return { note: 'Text uses a gradient or image fill — check manually' };
     }
-    const textColor = blend(
-      paint.layer.color,
-      paint.layer.opacity * node.opacity,
-      bg
-    );
+    const alpha = paint.layer.opacity * node.opacity;
+    let worstBg = bgs[0];
+    let textColor = blend(paint.layer.color, alpha, worstBg);
+    let ratio = contrast(textColor, worstBg);
+    for (const bg of bgs) {
+      const color = blend(paint.layer.color, alpha, bg);
+      const r = contrast(color, bg);
+      if (r < ratio) {
+        ratio = r;
+        textColor = color;
+        worstBg = bg;
+      }
+    }
     // WCAG "large text": 18pt (24px) or 14pt (18.66px) bold
     const isLarge =
       seg.fontSize >= 24 || (seg.fontSize >= 18.66 && seg.fontWeight >= 700);
@@ -311,7 +337,8 @@ function analyzeSegments(
       start: seg.start,
       end: seg.end,
       textColor,
-      ratio: contrast(textColor, bg),
+      bg: worstBg,
+      ratio,
       fontSize: seg.fontSize,
       isLarge,
       needed: neededRatio(isLarge, contrastLevel),
@@ -320,13 +347,41 @@ function analyzeSegments(
   return checks;
 }
 
+// A colour close to the text colour that passes on every background colour
+function suggestForAll(text: RGB, bgs: RGB[], worst: RGB, target: number): RGB | null {
+  const passesAll = (c: RGB) => bgs.every((bg) => contrast(c, bg) >= target);
+  const candidates: (RGB | null)[] = [suggestColor(text, worst, target)];
+  for (const bg of bgs) candidates.push(suggestColor(text, bg, target));
+  candidates.push({ r: 0, g: 0, b: 0 }, WHITE);
+  for (const c of candidates) {
+    if (c && passesAll(c)) return c;
+  }
+  return null;
+}
+
+// The background of a text layer: worked out from the layers when possible,
+// otherwise the colours measured from a rendered image (see "Measuring" below).
+function backgroundOf(
+  node: TextNode
+): { colors: RGB[]; fromPixels: boolean } | NoBackground {
+  const bg = findBackground(node);
+  if (!('note' in bg)) return { colors: [bg.color], fromPixels: false };
+  if (!bg.measurable) return bg; // a photo: never measured
+  const measured = measuredBackgrounds.get(node.id);
+  if (measured) return { colors: measured, fromPixels: true };
+  // If measuring was tried and failed, say why, so the problem can be found
+  const problem = measureProblems.get(node.id);
+  return problem ? { note: `${bg.note} (could not measure: ${problem})`, measurable: true } : bg;
+}
+
 function usesColorStyle(node: TextNode): boolean {
   if (node.fillStyleId !== '') return true;
   const bound = node.boundVariables as { fills?: unknown } | undefined;
   return !!(bound && bound.fills);
 }
 
-function checkText(node: TextNode): Result {
+// "needPixels" collects the layers whose background has to be measured from an image
+function checkText(node: TextNode, needPixels?: TextNode[]): Result {
   const result: Result = {
     id: node.id,
     name: node.name,
@@ -343,14 +398,14 @@ function checkText(node: TextNode): Result {
     status: 'check',
   };
 
-  const bg = findBackground(node);
+  const bg = backgroundOf(node);
+  if (needPixels && ('note' in bg ? bg.measurable : bg.fromPixels)) needPixels.push(node);
   if ('note' in bg) {
-    result.note = bg.note;
+    result.note = bg.note; // shown until the measurement arrives, or if it can't be made
     return result;
   }
-  result.bgHex = toHex(bg.color);
 
-  const checks = analyzeSegments(node, bg.color);
+  const checks = analyzeSegments(node, bg.colors);
   if ('note' in checks) {
     result.note = checks.note;
     return result;
@@ -367,6 +422,8 @@ function checkText(node: TextNode): Result {
   }
 
   result.ratio = Math.round(worst.ratio * 100) / 100;
+  result.bgHex = toHex(worst.bg);
+  result.varied = isVaried(bg.colors);
   result.textHex = toHex(worst.textColor);
   result.fontSize = Math.round(worst.fontSize * 10) / 10;
   result.isLarge = worst.isLarge;
@@ -376,10 +433,11 @@ function checkText(node: TextNode): Result {
   result.status = worst.ratio >= worst.needed ? 'pass' : 'fail';
 
   if (result.status === 'fail') {
-    const suggestion = suggestColor(worst.textColor, bg.color, worst.needed);
+    const suggestion = suggestForAll(worst.textColor, bg.colors, worst.bg, worst.needed);
     if (suggestion) {
       result.suggestHex = toHex(suggestion);
-      result.suggestRatio = Math.round(contrast(suggestion, bg.color) * 100) / 100;
+      const lowest = Math.min(...bg.colors.map((c) => contrast(suggestion, c)));
+      result.suggestRatio = Math.round(lowest * 100) / 100;
       result.detachesStyle = usesColorStyle(node);
     } else {
       result.noFix = true;
@@ -395,9 +453,9 @@ async function applyFix(id: string, custom?: RGB): Promise<boolean> {
   const node = await figma.getNodeByIdAsync(id);
   if (!node || node.type !== 'TEXT') return false;
 
-  const bg = findBackground(node);
+  const bg = backgroundOf(node);
   if ('note' in bg) return false;
-  const checks = analyzeSegments(node, bg.color);
+  const checks = analyzeSegments(node, bg.colors);
   if ('note' in checks) return false;
 
   const failing = checks.filter((c) => c.ratio < c.needed);
@@ -412,7 +470,7 @@ async function applyFix(id: string, custom?: RGB): Promise<boolean> {
 
   let changed = false;
   for (const c of failing) {
-    const color = custom ?? suggestColor(c.textColor, bg.color, c.needed);
+    const color = custom ?? suggestForAll(c.textColor, bg.colors, c.bg, c.needed);
     if (!color) continue;
     node.setRangeFills(c.start, c.end, [{ type: 'SOLID', color }]);
     changed = true;
@@ -433,9 +491,10 @@ function isVisible(node: SceneNode): boolean {
   return true;
 }
 
-function collectTextNodes(): TextNode[] {
+// Text layers in the selection, or in the given layers
+function collectTextNodes(roots: ReadonlyArray<SceneNode> = figma.currentPage.selection): TextNode[] {
   const out: TextNode[] = [];
-  for (const n of figma.currentPage.selection) {
+  for (const n of roots) {
     if (isAnnotation(n)) continue; // don't check our own markers and legend
     if (n.type === 'TEXT') {
       if (isVisible(n)) out.push(n);
@@ -504,7 +563,7 @@ function checkTarget(node: SceneNode, reason: string): TargetResult {
   return result;
 }
 
-function collectTargets(): TargetResult[] {
+function collectTargets(roots: ReadonlyArray<SceneNode> = figma.currentPage.selection): TargetResult[] {
   const out: TargetResult[] = [];
 
   const visit = (node: SceneNode) => {
@@ -527,7 +586,7 @@ function collectTargets(): TargetResult[] {
     }
   };
 
-  for (const node of figma.currentPage.selection) {
+  for (const node of roots) {
     if (!isAnnotation(node)) visit(node);
   }
   return out;
@@ -674,9 +733,9 @@ function makeNeededSize(box: Rect, color: RGB): RectangleNode {
   return needed;
 }
 
-function collectIssues(): Issue[] {
+function collectIssues(results: Result[], targets: TargetResult[]): Issue[] {
   const issues: Issue[] = [];
-  for (const r of lastResults) {
+  for (const r of results) {
     if (r.status !== 'fail' || r.ignored) continue;
     issues.push({
       id: r.id,
@@ -687,7 +746,7 @@ function collectIssues(): Issue[] {
         (r.suggestHex ? `Try ${r.suggestHex}.` : 'Change the background.'),
     });
   }
-  for (const t of lastTargets) {
+  for (const t of targets) {
     if (t.status !== 'fail' || t.ignored) continue;
     issues.push({
       id: t.id,
@@ -752,10 +811,28 @@ function makeLegend(screen: SceneNode, box: Rect): FrameNode {
 }
 
 async function annotate(): Promise<{ markers: number; screens: number }> {
-  // Start fresh for the selected screens only. Other screens keep their annotations.
+  // Annotations always cover whole screens, even when only a part of a screen is
+  // selected. Otherwise updating from a small selection would wipe the markers for
+  // the rest of that screen.
+  const screens: SceneNode[] = [];
+  for (const node of figma.currentPage.selection) {
+    if (isAnnotation(node)) continue;
+    const screen = screenOf(node);
+    if (screens.indexOf(screen) === -1) screens.push(screen);
+  }
+
+  // Start fresh for these screens only. Other screens keep their annotations.
   clearAnnotations(selectedScreenIds());
 
-  const issues = collectIssues();
+  const textNodes = collectTextNodes(screens).slice(0, MAX_NODES);
+  const needPixels: TextNode[] = [];
+  let results = textNodes.map((node) => checkText(node, needPixels));
+  if (needPixels.length > 0) {
+    // Some backgrounds outside the selection may not have been measured yet
+    await measurePixels(needPixels);
+    results = textNodes.map((node) => checkText(node));
+  }
+  const issues = collectIssues(results, collectTargets(screens));
   if (issues.length === 0) return { markers: 0, screens: 0 };
   await Promise.all([figma.loadFontAsync(REGULAR), figma.loadFontAsync(BOLD)]);
 
@@ -815,29 +892,125 @@ async function annotate(): Promise<{ markers: number; screens: number }> {
   return { markers, screens: byScreen.size };
 }
 
+// ---------- Measuring the background from pixels ----------
+// When the layers can't tell what is behind a text (an icon or other vector shape,
+// an outlined element with no fill, a gradient), the plugin renders the screen as
+// an image, and the plugin window reads the colours just around the text from it.
+// Text on a photo is never measured: it stays "check manually".
+
+const measuredBackgrounds = new Map<string, RGB[]>();
+type MeasureReply = { colors: { [id: string]: number[][] }; error?: string } | null;
+const measureProblems = new Map<string, string>(); // why a layer could not be measured
+const waitingForWindow = new Map<number, (reply: MeasureReply) => void>();
+let measureRequests = 0;
+
+function colorDistance(a: RGB, b: RGB): number {
+  return Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
+}
+
+function isVaried(colors: RGB[]): boolean {
+  return colors.some((c) => colorDistance(c, colors[0]) > 0.06);
+}
+
+// Returns true if any measured background (or the reason it failed) is different from last time
+async function measurePixels(nodes: TextNode[]): Promise<boolean> {
+  const before = new Map<string, string>();
+  const stateOf = (id: string) =>
+    JSON.stringify([measuredBackgrounds.get(id) ?? null, measureProblems.get(id) ?? null]);
+  for (const node of nodes) {
+    before.set(node.id, stateOf(node.id));
+    measureProblems.delete(node.id);
+  }
+  const anyChange = () => nodes.some((node) => stateOf(node.id) !== before.get(node.id));
+  const fail = (ids: string[], why: string) => {
+    for (const id of ids) {
+      measuredBackgrounds.delete(id);
+      measureProblems.set(id, why);
+    }
+  };
+
+  type Item = { id: string; x: number; y: number; width: number; height: number };
+  const byScreen = new Map<string, { screen: SceneNode; items: Item[] }>();
+  for (const node of nodes) {
+    const b = node.absoluteRenderBounds ?? node.absoluteBoundingBox;
+    if (!b) {
+      fail([node.id], 'the layer has no visible area');
+      continue;
+    }
+    const screen = screenOf(node);
+    if (screen.id === node.id) {
+      fail([node.id], 'the text is not inside a frame');
+      continue;
+    }
+    let entry = byScreen.get(screen.id);
+    if (!entry) {
+      entry = { screen, items: [] };
+      byScreen.set(screen.id, entry);
+    }
+    entry.items.push({ id: node.id, x: b.x, y: b.y, width: b.width, height: b.height });
+  }
+
+  const shots: { bytes: Uint8Array; box: Rect; renderBox: Rect; items: Item[] }[] = [];
+  for (const { screen, items } of Array.from(byScreen.values())) {
+    const box = screen.absoluteBoundingBox;
+    if (!box || box.width < 1 || box.height < 1 || !('exportAsync' in screen)) {
+      fail(items.map((i) => i.id), 'the screen cannot be rendered');
+      continue;
+    }
+    // Full size, unless the screen is huge
+    const scale = Math.min(1, Math.sqrt(16000000 / (box.width * box.height)));
+    try {
+      const bytes = await screen.exportAsync({
+        format: 'PNG',
+        useAbsoluteBounds: true,
+        constraint: { type: 'SCALE', value: scale },
+      });
+      const renderBox = ('absoluteRenderBounds' in screen && screen.absoluteRenderBounds) || box;
+      shots.push({ bytes, box, renderBox, items });
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      fail(items.map((i) => i.id), 'rendering the screen failed: ' + why);
+    }
+  }
+  if (shots.length === 0) return anyChange();
+
+  const pagePaint = topVisiblePaint(figma.currentPage.backgrounds);
+  const pageBg = pagePaint && 'layer' in pagePaint ? pagePaint.layer.color : WHITE;
+  const requestId = ++measureRequests;
+  const reply = await new Promise<MeasureReply>((resolve) => {
+    waitingForWindow.set(requestId, resolve);
+    figma.ui.postMessage({ type: 'measure', requestId, pageBg: [pageBg.r, pageBg.g, pageBg.b], shots });
+    // Don't wait forever if the window can't answer
+    setTimeout(() => {
+      if (waitingForWindow.delete(requestId)) resolve(null);
+    }, 6000);
+  });
+  const sent = new Set<string>();
+  for (const shot of shots) for (const item of shot.items) sent.add(item.id);
+  for (const id of Array.from(sent)) {
+    const raw = reply ? reply.colors[id] : undefined;
+    if (raw && raw.length > 0) {
+      measuredBackgrounds.set(id, raw.map((c) => ({ r: c[0], g: c[1], b: c[2] })));
+    } else if (!reply) {
+      fail([id], 'the plugin window did not answer');
+    } else {
+      fail([id], reply.error || 'no pixels were found around the text');
+    }
+  }
+  return anyChange();
+}
+
 // ---------- Running ----------
 
 const ORDER = { fail: 0, check: 1, pass: 2 };
 let ignoreNextSelection = false;
 let lastResults: Result[] = [];
 let lastTargets: TargetResult[] = [];
+let runCount = 0;
 
-// "auto" marks a re-check started by a change on the canvas rather than by the user
-function run(auto = false) {
-  if (figma.currentPage.selection.length === 0) {
-    lastResults = [];
-    lastTargets = [];
-    figma.ui.postMessage({
-      type: 'empty',
-      auto,
-      targetSize,
-      level: contrastLevel,
-      ...annotationState(),
-    });
-    return;
-  }
-  const nodes = collectTextNodes();
-  const results = nodes.slice(0, MAX_NODES).map(checkText);
+// Checks the given text layers and the touch targets, and sends everything to the window
+function postResults(auto: boolean, nodes: TextNode[], total: number, needPixels?: TextNode[]) {
+  const results = nodes.map((node) => checkText(node, needPixels));
   results.sort(
     (a, b) =>
       ORDER[a.status] - ORDER[b.status] || (a.ratio ?? 0) - (b.ratio ?? 0)
@@ -856,12 +1029,50 @@ function run(auto = false) {
     type: 'results',
     auto,
     results,
-    total: nodes.length,
+    total,
     targets,
     targetSize,
     level: contrastLevel,
     ...annotationState(),
   });
+}
+
+// "auto" marks a re-check started by a change on the canvas rather than by the user
+function run(auto = false) {
+  const thisRun = ++runCount;
+  if (figma.currentPage.selection.length === 0) {
+    lastResults = [];
+    lastTargets = [];
+    figma.ui.postMessage({
+      type: 'empty',
+      auto,
+      targetSize,
+      level: contrastLevel,
+      ...annotationState(),
+    });
+    return;
+  }
+  const all = collectTextNodes();
+  const nodes = all.slice(0, MAX_NODES);
+
+  // First answer straight away, from the layers (and from earlier measurements)
+  const needPixels: TextNode[] = [];
+  postResults(auto, nodes, all.length, needPixels);
+
+  // Then measure the backgrounds the layers couldn't explain, and update the list
+  if (needPixels.length > 0) {
+    measurePixels(needPixels).then(
+      (changed) => {
+        if (!changed || thisRun !== runCount) return; // nothing new, or a newer check has started
+        try {
+          postResults(auto, nodes, all.length);
+        } catch (error) {
+          // A layer was deleted in the meantime; the next automatic re-check covers it
+        }
+      },
+      () => undefined
+    );
+  }
 }
 
 figma.on('selectionchange', () => {
@@ -880,8 +1091,20 @@ figma.ui.onmessage = async (msg: {
   scope?: string;
   hex?: string;
   kind?: string;
+  requestId?: number;
+  colors?: { [id: string]: number[][] };
+  error?: string;
 }) => {
   if (msg.type === 'recheck') run();
+
+  // The window's answer to a "measure" request
+  if (msg.type === 'measured' && msg.requestId !== undefined) {
+    const resolve = waitingForWindow.get(msg.requestId);
+    if (resolve) {
+      waitingForWindow.delete(msg.requestId);
+      resolve({ colors: msg.colors ?? {}, error: msg.error });
+    }
+  }
 
   if (msg.type === 'select' && msg.id) {
     const node = await figma.getNodeByIdAsync(msg.id);
@@ -918,7 +1141,7 @@ figma.ui.onmessage = async (msg: {
       figma.notify(
         markers > 0
           ? `Added ${markers} ${markers === 1 ? 'marker' : 'markers'} on ${screens} ${screens === 1 ? 'screen' : 'screens'} ✓  (Cmd+Z to undo)`
-          : 'Nothing is failing, so there is nothing to annotate'
+          : 'Nothing is failing on this screen, so there are no markers to show'
       );
     } catch (error) {
       figma.notify('Could not annotate: ' + (error instanceof Error ? error.message : String(error)), {
