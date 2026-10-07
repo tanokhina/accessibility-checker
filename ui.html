@@ -795,7 +795,7 @@
       li.append(fixRow(r, (hex) => {
         const ratio = contrast(hexToRgb(hex), hexToRgb(r.bgHex));
         swatch.style.color = hex;
-        metaLine.textContent = hex + ' on ' + r.bgHex + ' · preview, not applied yet';
+        metaLine.textContent = hex + ' on ' + r.bgHex + ' · preview';
         ratioLine.textContent = ratio.toFixed(2) + ':1';
         ratioLine.classList.toggle('would-pass', ratio >= r.needed);
         badges.replaceChildren(

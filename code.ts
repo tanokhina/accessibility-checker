@@ -847,7 +847,9 @@ async function annotate(): Promise<{ markers: number; screens: number }> {
   for (const issue of issues) {
     const node = await figma.getNodeByIdAsync(issue.id);
     if (!node || node.type === 'DOCUMENT' || node.type === 'PAGE') continue;
-    const box = node.absoluteBoundingBox;
+    // For text, mark the visible letters, not the layer's box: a text layer set to fill a
+    // row would otherwise get an outline as wide as the whole row.
+    const box = (node.type === 'TEXT' && node.absoluteRenderBounds) || node.absoluteBoundingBox;
     if (!box) continue;
     const screen = screenOf(node);
     let entry = byScreen.get(screen.id);
@@ -872,8 +874,17 @@ async function annotate(): Promise<{ markers: number; screens: number }> {
       if (issue.kind === 'target') nodes.push(makeNeededSize(box, color));
       nodes.push(makeOutline(box, color));
       const badge = makeBadge(index + 1, color);
-      badge.x = box.x - 13;
-      badge.y = box.y - 13;
+      // The badge sits fully outside the outline, to its left, so it never covers the
+      // text or control it points at. Small items get it centred, tall ones at the top.
+      let left = box.x - 3;
+      let top = box.y - 3;
+      if (issue.kind === 'target') {
+        // Keep clear of the dashed "needed size" box too, which can be larger
+        left = Math.min(left, box.x + box.width / 2 - Math.max(targetSize, box.width) / 2);
+        top = Math.min(top, box.y + box.height / 2 - Math.max(targetSize, box.height) / 2);
+      }
+      badge.x = left - 4 - badge.width;
+      badge.y = box.height <= 40 ? box.y + box.height / 2 - badge.height / 2 : top;
       nodes.push(badge);
       addLegendRow(legend, index + 1, issue, color);
     });
