@@ -1,6 +1,6 @@
-# Accessibility checker
+# Magpie — accessibility checker
 
-A Figma plugin that finds accessibility problems in a design, suggests fixes, and marks the problems on the canvas for the rest of the team.
+Magpie is a Figma plugin that finds accessibility problems in a design, suggests fixes, and marks the problems on the canvas for the rest of the team.
 
 It checks two things: the colour contrast of text, and the size of buttons and other tappable elements. It works entirely inside Figma and never connects to the internet.
 
@@ -65,7 +65,7 @@ You need the [Figma desktop app](https://www.figma.com/downloads/) and [Node.js]
    npm run build
    ```
 4. In Figma, open **Plugins → Development → Import plugin from manifest…** and choose `manifest.json` from the folder.
-5. Run it from **Plugins → Development → Accessibility checker**.
+5. Run it from **Plugins → Development → Magpie**.
 
 While working on the code, run `npm run watch` instead of `npm run build`. It rebuilds `code.js` every time `code.ts` is saved. Close and reopen the plugin in Figma to load the new build.
 
