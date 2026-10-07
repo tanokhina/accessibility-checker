@@ -1097,10 +1097,13 @@ figma.ui.onmessage = async (msg: {
   hex?: string;
   kind?: string;
   requestId?: number;
+  auto?: boolean;
   colors?: { [id: string]: number[][] };
   error?: string;
 }) => {
-  if (msg.type === 'recheck') run();
+  // Sent quietly by the window when the pointer returns to it ("auto"), to catch edits
+  // to colour styles and variables, which don't show up as changes to the layers
+  if (msg.type === 'recheck') run(msg.auto === true);
 
   // The window's answer to a "measure" request
   if (msg.type === 'measured' && msg.requestId !== undefined) {

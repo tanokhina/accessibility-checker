@@ -84,6 +84,26 @@
   #summary { flex: 1; padding-top: 3px; font-size: 14px; color: var(--muted); }
   .tools { flex: none; display: flex; gap: 6px; }
   button.btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+
+  /* Tooltip that also works on a disabled button: the wrapper is hovered, not the button */
+  .tipwrap { position: relative; display: inline-flex; }
+  .tipwrap button:disabled { pointer-events: none; }
+  .tipwrap[data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 5;
+    width: max-content;
+    max-width: 230px;
+    padding: 6px 9px;
+    border-radius: 6px;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 12px;
+    line-height: 1.35;
+    pointer-events: none;
+  }
   #summary b { font-weight: 600; color: var(--text); }
   ul { list-style: none; margin: 0; padding: 12px 0 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 
@@ -212,10 +232,9 @@
     color: var(--text);
   }
   .hex-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .picker-note { font-size: 12px; color: var(--muted); margin-top: -4px; }
-  .live { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-  .live-ratio { font-size: 16px; font-weight: 600; }
-  .live-ratio.bad { color: var(--no-fg); }
+  .picker-note { flex: 1; text-align: right; font-size: 12px; color: var(--muted); }
+  /* While a colour is being picked, the card's own ratio previews it: green once it would pass */
+  li.fail .ratio.would-pass { color: var(--ok-fg); }
 
   /* Bottom line of a card: a note on the left, Ignore on the right */
   .card-foot { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; }
@@ -331,8 +350,8 @@
   <div id="toolbar" hidden>
     <div id="summary"></div>
     <div class="tools">
-      <button id="clear" class="btn small" hidden title="Remove the markers and legend from the canvas">Clear</button>
-      <button id="annotate" class="btn small" hidden title="Put numbered markers on the canvas for every failing item on the selected screens, from both tabs">Annotate</button>
+      <button id="clear" class="btn small" hidden title="Remove the markers and legend from the selected screens">Clear</button>
+      <span class="tipwrap" id="annotate-wrap" hidden><button id="annotate" class="btn small">Annotate</button></span>
     </div>
   </div>
   <ul id="list"></ul>
@@ -349,7 +368,6 @@
     <option value="24">24 × 24 · WCAG AA</option>
   </select>
   <div class="spacer"></div>
-  <button id="recheck" class="btn" title="The plugin re-checks by itself when the design changes. Use this after editing a colour style or variable.">Re-check</button>
   <button id="fixall" class="btn primary" hidden>Fix all</button>
 </footer>
 
@@ -362,6 +380,7 @@
   const tabButtons = document.querySelectorAll('.tab');
   const toolbar = document.getElementById('toolbar');
   const annotateButton = document.getElementById('annotate');
+  const annotateWrap = document.getElementById('annotate-wrap');
   const clearButton = document.getElementById('clear');
   const scroller = document.querySelector('main');
 
@@ -379,7 +398,16 @@
     parent.postMessage({ pluginMessage: msg }, '*');
   }
 
-  document.getElementById('recheck').onclick = () => send({ type: 'recheck' });
+  // There is no Re-check button: the plugin re-checks when the design changes. As a safety
+  // net for edits it can't see (a colour style or variable changed in Figma's panels), it
+  // also re-checks quietly whenever the pointer comes back into this window.
+  let lastQuietCheck = 0;
+  document.documentElement.addEventListener('mouseenter', () => {
+    const now = Date.now();
+    if (now - lastQuietCheck < 1000) return;
+    lastQuietCheck = now;
+    send({ type: 'recheck', auto: true });
+  });
   fixAllButton.onclick = () => {
     fixAllButton.disabled = true;
     fixAllButton.textContent = 'Fixing…';
@@ -390,8 +418,7 @@
     annotateButton.textContent = 'Annotating…';
     send({ type: 'annotate' });
   };
-  clearButton.onclick = () =>
-    send({ type: 'clear-annotations', scope: data && data.annotatedSelection ? 'selection' : 'all' });
+  clearButton.onclick = () => send({ type: 'clear-annotations', scope: 'selection' });
   levelSelect.onchange = () => send({ type: 'set-level', level: levelSelect.value });
   sizeSelect.onchange = () => send({ type: 'set-target', size: Number(sizeSelect.value) });
   tabButtons.forEach((button) => {
@@ -548,13 +575,8 @@
     input.maxLength = 7;
     input.spellcheck = false;
     input.title = 'Hex colour';
-    // The live result for the colour being picked, large enough to watch while dragging
-    const live = el('div', 'live');
-    const liveRatio = el('span', 'live-ratio');
-    const liveBadge = el('span', 'badge');
-    live.append(liveRatio, liveBadge);
-    row.append(preview, input, live);
-    panel.append(sv, hue, row, el('div', 'picker-note', 'Striped area = colours that fail ' + data.level));
+    row.append(preview, input, el('div', 'picker-note', 'Striped area fails ' + data.level));
+    panel.append(sv, hue, row);
 
     // Marks which colours of the current hue fail, and draws the line where passing starts
     function drawPassArea() {
@@ -603,12 +625,6 @@
       thumb.style.background = hex;
       preview.style.color = hex;
       if (!fromInput) input.value = hex;
-      const ratio = contrast(hexToRgb(hex), bg);
-      const ok = ratio >= r.needed;
-      liveRatio.textContent = ratio.toFixed(2) + ':1';
-      liveRatio.className = 'live-ratio' + (ok ? '' : ' bad');
-      liveBadge.textContent = data.level + (ok ? ' ✓' : ' ✕');
-      liveBadge.className = 'badge ' + (ok ? 'ok' : 'no');
       onChange(hex);
     }
 
@@ -662,7 +678,8 @@
   }
 
   // Suggested colour, with a picker to choose your own
-  function fixRow(r) {
+  // "onPreview" lets the card's header show the colour being picked
+  function fixRow(r, onPreview) {
     const wrap = el('div', 'fixwrap');
     wrap.onclick = (event) => event.stopPropagation(); // don't also select the layer
     const box = el('div', 'fix');
@@ -709,7 +726,10 @@
     if (isOpen) {
       const panel = el('div', 'picker');
       wrap.append(panel);
-      buildPicker(panel, r, bg, show);
+      buildPicker(panel, r, bg, (hex) => {
+        show(hex);
+        onPreview(hex);
+      });
     } else {
       show(r.suggestHex);
     }
@@ -735,14 +755,17 @@
       ? r.textHex + ' on ' + r.bgHex + ' · ' + r.fontSize + 'px' + (r.isLarge ? ' · large text' : '') +
         (r.varied ? ' · varied background, worst spot' : '')
       : r.note;
-    info.append(el('div', 'meta', meta));
+    const metaLine = el('div', 'meta', meta);
+    info.append(metaLine);
 
     main.append(swatch, info);
 
+    const ratioLine = el('div', 'ratio');
+    const badges = el('div', 'badges');
     if (r.ratio !== null) {
       const score = el('div', 'score');
-      score.append(el('div', 'ratio', r.ratio.toFixed(2) + ':1'));
-      const badges = el('div', 'badges');
+      ratioLine.textContent = r.ratio.toFixed(2) + ':1';
+      score.append(ratioLine);
       badges.append(badge('AA', r.aa), badge('AAA', r.aaa, data.level === 'AAA'));
       score.append(badges);
       main.append(score);
@@ -753,7 +776,18 @@
       li.append(cardFoot('No text colour can pass on this background — change the background instead.',
         'warn', 'contrast', r.id));
     } else if (r.status === 'fail') {
-      li.append(fixRow(r));
+      // While the picker is open, the top of the card shows the picked colour's result
+      // instead of the current one, so the big ratio and the badges move as you drag.
+      li.append(fixRow(r, (hex) => {
+        const ratio = contrast(hexToRgb(hex), hexToRgb(r.bgHex));
+        swatch.style.color = hex;
+        metaLine.textContent = hex + ' on ' + r.bgHex + ' · preview, not applied yet';
+        ratioLine.textContent = ratio.toFixed(2) + ':1';
+        ratioLine.classList.toggle('would-pass', ratio >= r.needed);
+        badges.replaceChildren(
+          badge('AA', ratio >= (r.isLarge ? 3 : 4.5)),
+          badge('AAA', ratio >= (r.isLarge ? 4.5 : 7), data.level === 'AAA'));
+      }));
       li.append(cardFoot(r.detachesStyle ? 'Applying will detach the colour style or variable' : '',
         '', 'contrast', r.id));
     } else if (r.status === 'check') {
@@ -845,7 +879,7 @@
     if (targets.length === 0) {
       list.append(infoCard('No tappable layers found',
         'The plugin looks for layers with a prototype link, or with a name like ' +
-        '"Button", "Tab", "Close" or "More". Name your tappable layers that way and press Re-check.'));
+        '"Button", "Tab", "Close" or "More". Name your tappable layers that way and they will appear here.'));
       return;
     }
     const shown = targets.filter((t) => !isHidden(t));
@@ -878,18 +912,24 @@
     const onSelection = !!(data && data.annotatedSelection);
     // Always offer the button when something is selected. With nothing failing, pressing it
     // says so (and removes old markers), which is clearer than a button that has vanished.
-    annotateButton.hidden = !hasResults;
-    annotateButton.title = fails === 0 && !onSelection
-      ? 'Nothing is failing on the selected screens, so there is nothing to mark'
-      : 'Put numbered markers on the canvas for every failing item on the selected screens, from both tabs';
-    annotateButton.disabled = false;
+    annotateWrap.hidden = !hasResults;
+    // Nothing failing means nothing to mark, so the button is switched off. It stays on
+    // for a screen that already has markers, so they can be refreshed after fixes.
+    const nothingToMark = fails === 0 && !onSelection;
+    annotateButton.disabled = nothingToMark;
+    if (nothingToMark) {
+      annotateWrap.dataset.tip = 'Nothing to annotate. No failing items in this selection.';
+      annotateButton.title = '';
+    } else {
+      delete annotateWrap.dataset.tip;
+      annotateButton.title =
+        'Put numbered markers on the canvas for every failing item on the selected screens, from both tabs';
+    }
     annotateButton.textContent = onSelection ? 'Update markers' : 'Annotate';
-    clearButton.hidden = !(data && data.annotated);
-    clearButton.textContent = onSelection ? 'Clear' : 'Clear all';
-    clearButton.title = onSelection
-      ? 'Remove the markers and legend from the selected screens'
-      : 'Remove every marker and legend on this page';
-    toolbar.hidden = summary.textContent === '' && annotateButton.hidden && clearButton.hidden;
+    // "Clear" only appears for a selected screen that has markers. Markers on other
+    // screens can be deleted in Figma's layers panel like any other layer.
+    clearButton.hidden = !onSelection;
+    toolbar.hidden = summary.textContent === '' && annotateWrap.hidden && clearButton.hidden;
   }
 
   function renderBody() {
