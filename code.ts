@@ -526,6 +526,10 @@ const TARGET_WORDS =
 const CONTAINER_WORDS =
   /\b(bar|group|list|container|row|section|nav|navigation|wrapper|header|footer|screen|page|card)\b/;
 
+// A name that ends like this is one tappable thing even if it also contains a container
+// word: "Overview navigation item", "Footer link", "Menu option 2"
+const TARGET_ENDINGS = /\b(item|link|option)( \d+)?\s*$/;
+
 let targetSize = 44;
 
 // "IconButton/Close_small" -> "icon button close small"
@@ -572,7 +576,8 @@ function collectTargets(roots: ReadonlyArray<SceneNode> = figma.currentPage.sele
     const hasLink = 'reactions' in node && node.reactions.length > 0;
     // A text layer's name is usually its own text, so only trust prototype links there
     const words = node.type === 'TEXT' ? '' : nameWords(node.name);
-    const named = TARGET_WORDS.test(words) && !CONTAINER_WORDS.test(words);
+    const named =
+      TARGET_ENDINGS.test(words) || (TARGET_WORDS.test(words) && !CONTAINER_WORDS.test(words));
 
     if (hasLink || named) {
       out.push(checkTarget(node, hasLink ? 'Has a prototype link' : 'Named like a control'));

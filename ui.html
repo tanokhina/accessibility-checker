@@ -876,8 +876,12 @@
       : 0;
     // Each screen keeps its own annotations, so the buttons follow the selected screens
     const onSelection = !!(data && data.annotatedSelection);
-    // Keep "Update markers" available after everything is fixed, so old markers can be refreshed
-    annotateButton.hidden = fails === 0 && !onSelection;
+    // Always offer the button when something is selected. With nothing failing, pressing it
+    // says so (and removes old markers), which is clearer than a button that has vanished.
+    annotateButton.hidden = !hasResults;
+    annotateButton.title = fails === 0 && !onSelection
+      ? 'Nothing is failing on the selected screens, so there is nothing to mark'
+      : 'Put numbered markers on the canvas for every failing item on the selected screens, from both tabs';
     annotateButton.disabled = false;
     annotateButton.textContent = onSelection ? 'Update markers' : 'Annotate';
     clearButton.hidden = !(data && data.annotated);
