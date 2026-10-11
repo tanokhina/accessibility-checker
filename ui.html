@@ -767,7 +767,8 @@
     info.append(el('div', 'text', r.text.trim() || r.name));
     const meta = r.ratio !== null
       ? r.textHex + ' on ' + r.bgHex + ' · ' + r.fontSize + 'px' + (r.isLarge ? ' · large text' : '') +
-        (r.varied ? ' · varied background, worst spot' : '')
+        (r.gradient ? ' · gradient background, worst spot'
+          : r.varied ? ' · varied background, worst spot' : '')
       : r.note;
     const metaLine = el('div', 'meta', meta);
     info.append(metaLine);

@@ -51,6 +51,7 @@ type Result = {
   noFix?: boolean;
   detachesStyle?: boolean;
   varied?: boolean; // the background has more than one colour (gradient, photo, pattern)
+  gradient?: boolean; // the text sits on a gradient fill, whether or not it varies much there
 };
 
 type SegmentCheck = {
@@ -234,7 +235,9 @@ function composite(layers: Layer[], base: RGB): RGB {
 
 // "measurable" says whether the plugin may read the colour from a rendered image instead.
 // Shapes, icons and gradients: yes. Photos: no, those are left for a person to judge.
-type NoBackground = { note: string; measurable: boolean };
+// "gradient" is remembered so the result can say so, even where the gradient barely
+// changes around a short text and the measured colours come out almost the same.
+type NoBackground = { note: string; measurable: boolean; gradient?: boolean };
 
 function findBackground(node: SceneNode): { color: RGB } | NoBackground {
   const box = node.absoluteBoundingBox;
@@ -246,6 +249,7 @@ function findBackground(node: SceneNode): { color: RGB } | NoBackground {
   const complexNote: NoBackground = {
     note: 'Background is a gradient or mixed fill — check manually',
     measurable: true,
+    gradient: true,
   };
 
   const consider = (target: SceneNode): 'opaque' | 'photo' | 'complex' | 'continue' => {
@@ -363,15 +367,17 @@ function suggestForAll(text: RGB, bgs: RGB[], worst: RGB, target: number): RGB |
 // otherwise the colours measured from a rendered image (see "Measuring" below).
 function backgroundOf(
   node: TextNode
-): { colors: RGB[]; fromPixels: boolean } | NoBackground {
+): { colors: RGB[]; fromPixels: boolean; gradient?: boolean } | NoBackground {
   const bg = findBackground(node);
   if (!('note' in bg)) return { colors: [bg.color], fromPixels: false };
   if (!bg.measurable) return bg; // a photo: never measured
   const measured = measuredBackgrounds.get(node.id);
-  if (measured) return { colors: measured, fromPixels: true };
+  if (measured) return { colors: measured, fromPixels: true, gradient: bg.gradient === true };
   // If measuring was tried and failed, say why, so the problem can be found
   const problem = measureProblems.get(node.id);
-  return problem ? { note: `${bg.note} (could not measure: ${problem})`, measurable: true } : bg;
+  return problem
+    ? { note: `${bg.note} (could not measure: ${problem})`, measurable: true, gradient: bg.gradient }
+    : bg;
 }
 
 function usesColorStyle(node: TextNode): boolean {
@@ -424,6 +430,7 @@ function checkText(node: TextNode, needPixels?: TextNode[]): Result {
   result.ratio = Math.round(worst.ratio * 100) / 100;
   result.bgHex = toHex(worst.bg);
   result.varied = isVaried(bg.colors);
+  result.gradient = bg.gradient === true;
   result.textHex = toHex(worst.textColor);
   result.fontSize = Math.round(worst.fontSize * 10) / 10;
   result.isLarge = worst.isLarge;
